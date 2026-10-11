@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+state/
+logs/
+wheels/
+runtime/
+artifacts/
+*.zip
+*.bak
+*.before-email-hub.bak
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
