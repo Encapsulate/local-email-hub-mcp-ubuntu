@@ -1,312 +1,221 @@
-# Local Email Hub MCP
+# Local Email Hub MCP — Ubuntu Edition
 
-A Windows-first, local Model Context Protocol (MCP) server that lets AI clients search and read mail, create new or reply drafts, and queue outbound messages through **classic Microsoft Outlook**.
+A privacy-focused, local email MCP server for Ubuntu and other systemd-based Linux distributions. It lets trusted AI clients search and read Gmail, create drafts and reply drafts, and queue outbound messages behind a separate human approval step.
 
-The project is designed for local models and agents such as Qwen Code, Pi, Hermes Agent, DeepSeek Harness, OpenWebUI, and any MCP client that supports Streamable HTTP. Ollama and llama.cpp supply model inference; the agent or UI hosting the model supplies the MCP tools.
+The service binds only to `127.0.0.1`. It does not expose a send-now or approval tool to the model.
 
-> [!IMPORTANT]
-> Email is untrusted external input. This server returns message bodies as plain text with an explicit prompt-injection warning. Outbound messages cannot be approved through MCP: a person must review and approve the immutable queue snapshot in a separate local program.
+> **Upstream credit:** This project is an Ubuntu/Gmail port of [Knappen/local-email-hub-mcp](https://github.com/Knappen/local-email-hub-mcp). Knappen created the original Windows/classic-Outlook design, including its human approval boundary, durable queue, idempotency behavior, crash-to-unknown rule, and untrusted-email handling. This repository is a GitHub fork so that relationship remains visible. The Linux port replaces Outlook COM and PowerShell with IMAP/SMTP, Python, Bash, and a hardened systemd user service.
 
-## What it provides
+## Security model in one minute
 
-- One Outlook-backed adapter for every Microsoft 365, Outlook.com, Gmail, or generic IMAP account already configured in the user's Outlook profile.
-- A local Streamable HTTP MCP endpoint at `http://127.0.0.1:18477/mcp`.
-- Nine tools for health, account/folder discovery, search/read, new drafts, reply drafts, durable send queueing, and queue status.
-- SQLite durability using WAL mode, `synchronous=FULL`, integrity checks, and rotating consistent backups.
-- Idempotency keys that prevent a repeated agent request from creating duplicate queue entries.
-- Conservative crash handling: a process interruption during Outlook's `Send()` call becomes `unknown` and is never automatically retried.
-- A human approval program outside the MCP tool surface.
-- Turnkey PowerShell launchers, desktop shortcuts, startup recovery, client-registration helpers, and portable-bundle export.
-- Loopback binding and DNS-rebinding protection, including a narrowly allowed `host.docker.internal` route for OpenWebUI on Docker Desktop.
+- Email is hostile input. Search/read results carry an explicit prompt-injection warning.
+- The server listens only on `http://127.0.0.1:18477/mcp`.
+- MCP can create drafts or queue mail, but cannot approve or immediately send anything.
+- A person must run `email-hub-approve`, inspect the immutable recipients/subject/body, and type an exact `SEND N` confirmation.
+- Ambiguous SMTP failures become `unknown` and are never automatically retried.
+- Credentials are entered locally with a hidden prompt and stored in a mode-`0600` file. They are never returned by an MCP tool or written to logs.
+- Queue rows necessarily contain unsent message content. The state directory is private and excluded from Git.
 
-## Requirements
+Read [Privacy](docs/PRIVACY.md), [Threat model](docs/THREAT-MODEL.md), and [Architecture](docs/ARCHITECTURE.md) before connecting a sensitive mailbox.
 
-- Windows 10 or 11.
-- **Classic Outlook for Windows** installed and configured. The new Outlook app does not expose the COM automation API used here.
-- Outlook must be usable by the same interactive Windows account running Email Hub.
-- Python 3.11–3.14, unless using a portable bundle that contains `runtime\python`.
-- At least one MCP-capable client.
+## Current scope
 
-No mailbox password, OAuth token, or app password is copied into Email Hub. Outlook remains responsible for provider authentication and synchronization.
+Version 0.1 targets Gmail with a Google app password:
 
-## Quick start
+- Ubuntu 22.04, 24.04, or a comparable systemd-based Linux distribution
+- Python 3.11 or newer
+- Gmail or Google Workspace account with IMAP available
+- Google two-step verification and an app password
+- A local MCP client supporting Streamable HTTP
 
-Open PowerShell or Command Prompt in the cloned folder and run:
-
-```powershell
-.\Setup-EmailHub.cmd
-```
-
-The setup program:
-
-1. Creates an isolated `.venv`.
-2. Installs dependencies from `wheels\` when present, otherwise from PyPI.
-3. Verifies Outlook access without printing mailbox addresses.
-4. Starts the MCP service on loopback.
-5. Performs a real MCP initialize/list-tools/health check.
-6. Creates `Email Hub AIO`, `Email Hub Status`, and `Email Hub Approval` desktop shortcuts.
-7. Creates a per-user Startup shortcut for recovery after sign-in.
-
-Then register installed clients:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Register-EmailHub-Clients.ps1
-```
-
-Start a new client session—or use the client's MCP reload command—after registration.
-
-## MCP endpoint
-
-| Consumer | URL |
-|---|---|
-| Windows applications | `http://127.0.0.1:18477/mcp` |
-| OpenWebUI in Docker Desktop | `http://host.docker.internal:18477/mcp` |
-
-The server remains bound to `127.0.0.1`. Docker Desktop's host gateway can proxy the second URL without opening a listener on the LAN.
-
-## Client setup
-
-### Qwen Code
-
-```powershell
-qwen mcp add --scope user --transport http --timeout 30000 `
-  --description "Local Outlook email with human-approved sending" `
-  email-hub http://127.0.0.1:18477/mcp
-```
-
-Verify with `qwen mcp list`, then open a new Qwen Code session.
-
-### Pi
-
-```powershell
-pi mcp add email-hub `
-  --url http://127.0.0.1:18477/mcp `
-  --exposure direct `
-  --description "Local Outlook email with human-approved sending"
-```
-
-Verify with `pi mcp list`.
-
-### Hermes Agent
-
-```powershell
-hermes mcp add --url http://127.0.0.1:18477/mcp --connect-timeout 30 email-hub
-```
-
-Choose **No** when asked whether authentication is required, then enable the tools. Verify with:
-
-```powershell
-hermes mcp test email-hub
-```
-
-### DeepSeek Harness
-
-Add this patch row to the applicable profile's `cordis.patch.yml`:
-
-```yaml
-- insert:
-    - id: mcp-email-hub
-      name: '@deepseek-ai/dsh-mcp-client'
-      config:
-        serverName: email-hub
-        transport: streamable-http
-        url: http://127.0.0.1:18477/mcp
-        toolCallTimeoutMs: 120000
-        failOnStartupError: false
-```
-
-The registration helper appends this row to existing `web` and `headless` profiles and creates a backup first. It does not force-restart Harness, preserving active work.
-
-### OpenWebUI
-
-Open **Admin Settings → Integrations → External Tool Servers**, then add:
-
-- Name: `Email Hub`
-- Type: `MCP (Streamable HTTP)`
-- URL: `http://host.docker.internal:18477/mcp`
-- Authentication: none
-
-Restrict the connection to trusted users or groups through OpenWebUI's access controls. OpenWebUI must support native Streamable HTTP MCP connections.
-
-### Ollama and llama.cpp
-
-Ollama and llama.cpp are model runtimes. They return tool calls, but the calling application executes tools. Configure Email Hub in Qwen Code, Pi, Hermes, Harness, OpenWebUI, or another agent host using an Ollama/llama.cpp model. Avoid registering the same tool at multiple layers in one conversation because duplicated tool definitions reduce reliability.
+The mail backend is standards-based IMAP/SMTP, but the setup assistant currently supplies Gmail hostnames and the Gmail Drafts folder. Generic-provider and OAuth flows are future work.
 
 ## Tools
 
 | Tool | Behavior |
 |---|---|
-| `email_health` | Tests Outlook, SQLite integrity, backups, and queue counts. |
-| `email_accounts` | Lists accounts in the active Outlook profile. |
-| `email_folders` | Lists mail folders and stable Outlook identifiers. |
-| `email_search` | Searches recent Inbox or selected-folder messages. |
-| `email_read` | Returns one message as plain text plus attachment metadata. |
-| `email_create_draft` | Saves a new Outlook draft; never sends. |
-| `email_create_reply_draft` | Saves reply or reply-all draft; never sends. |
-| `email_queue_send` | Saves an immutable, idempotent outbound request as `pending`. |
-| `email_queue_status` | Reports queue state without approving or modifying it. |
+| `email_health` | Checks configuration, IMAP connectivity, database integrity, backups, and queue counts. |
+| `email_accounts` | Returns the configured account identity, never its credential. |
+| `email_folders` | Lists IMAP folders. |
+| `email_search` | Searches the selected folder and returns bounded message metadata. |
+| `email_read` | Returns bounded plain-text content and attachment metadata. It never saves or opens attachments. |
+| `email_create_draft` | Appends a new Gmail draft; never sends. |
+| `email_create_reply_draft` | Creates a reply or reply-all draft; never sends. |
+| `email_queue_send` | Stores an immutable, idempotent outbound request as `pending`. |
+| `email_queue_status` | Reports queue state without approving or changing it. |
 
-Email Hub deliberately does not expose attachment download/open, delete, approval, or immediate-send tools.
+## Install on Ubuntu
 
-## Sending workflow
+Install the OS prerequisite if it is missing:
 
-1. The agent calls `email_queue_send`.
-2. Email Hub saves recipients, subject, and body in the local durable queue with status `pending`.
-3. Run `Approve-EmailHub.cmd` or choose approval from `Email-Hub-AIO.cmd`.
-4. Review the complete immutable snapshot.
-5. Select the entry and type the exact `SEND N` confirmation.
-6. The background worker marks it `sending`, asks Outlook to send, then records `sent`.
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv
+```
 
-If the process stops while Outlook is sending, the entry becomes `unknown`. Email Hub will not retry it. Inspect Outlook's Sent Items before deciding what to do next.
+Clone the Ubuntu fork and run its user-local installer:
 
-## Reliability model
+```bash
+git clone https://github.com/Encapsulate/local-email-hub-mcp-ubuntu.git
+cd local-email-hub-mcp-ubuntu
+./install.sh
+```
 
-- SQLite WAL allows readers while queue state is being committed.
-- `synchronous=FULL` favors durability over write speed; queue volume is small.
-- A consistent backup is taken on service start and every six hours.
-- The newest seven backups are retained under `state\backups`.
-- Startup converts orphaned `sending` entries to `unknown`.
-- Pre-send connection/setup failures retry with capped exponential backoff.
-- Failures at or after the ambiguous send boundary do not retry.
-- The MCP transport is stateless HTTP, so clients can reconnect without losing server-side work.
-- Outlook owns provider sync and preserves drafts independently of MCP sessions.
+The installer:
 
-See [Architecture](docs/ARCHITECTURE.md) for the state machine and [Threat model](docs/THREAT-MODEL.md) for security boundaries.
+1. creates an isolated `.venv`;
+2. installs the locked Python project dependencies;
+3. creates private config/state directories;
+4. installs `email-hub-configure`, `email-hub-status`, and `email-hub-approve` under `~/.local/bin`;
+5. installs and enables a hardened per-user `linux-email-hub.service`;
+6. performs real MCP initialize, list-tools, and health checks.
 
-## Everyday operation
+It does not ask for, discover, copy, or transmit mailbox credentials.
 
-Run `Email-Hub-AIO.cmd` for:
+## Configure Gmail privately
 
-1. Health/status and safe recovery.
-2. Human send approval.
-3. Client registration/repair.
-4. Runtime repair.
-5. Portable export.
-6. OpenWebUI integration setup.
+First create a Google app password for this local service. Do not use your normal Google password, and never paste an app password into an AI chat, shell history, issue, log, or screenshot.
 
-You can also use the individual commands:
+Run:
+
+```bash
+email-hub-configure
+```
+
+The local program prompts for:
+
+- Gmail address;
+- optional display name;
+- Google app password using a hidden terminal prompt.
+
+Before saving anything it authenticates to Gmail IMAP and SMTP without sending mail. On success it writes:
 
 ```text
-Setup-EmailHub.cmd
-Status-EmailHub.cmd
-Approve-EmailHub.cmd
-Export-EmailHub.cmd
+~/.config/linux-email-hub/config.env       mode 0600, non-secret settings
+~/.config/linux-email-hub/credentials.env  mode 0600, app password
 ```
 
-## Portable bundles
+Then it restarts the user service. Verify:
 
-Source-only bundle:
-
-```powershell
-.\Export-EmailHub.ps1
+```bash
+email-hub-status
+systemctl --user status linux-email-hub.service
 ```
 
-Offline-capable bundle when you already have a clean portable Python runtime and downloaded wheels:
+`email-hub-status` masks the account address and never prints the credential.
 
-```powershell
-.\Export-EmailHub.ps1 `
-  -RuntimeSource 'C:\portable-python-3.12' `
-  -WheelSource '.\wheels' `
-  -Destination '.\artifacts\email-hub-portable.zip'
+## Connect clients
+
+The endpoint is:
+
+```text
+http://127.0.0.1:18477/mcp
 ```
 
-Prepare wheels for Python 3.12 on Windows:
+### Codex CLI or IDE extension
 
-```powershell
-python -m pip download --dest .\wheels -r .\requirements.txt
+```bash
+codex mcp add email-hub --url http://127.0.0.1:18477/mcp
+codex mcp list
 ```
 
-The exporter excludes `.git`, virtual environments, state databases, queued messages, logs, and credentials. Always inspect an archive before distributing it.
+Start a new Codex session after registration so it reloads the tool inventory.
+
+### Hermes Agent
+
+```bash
+hermes mcp add --url http://127.0.0.1:18477/mcp --connect-timeout 30 email-hub
+hermes mcp test email-hub
+```
+
+Answer **No** when asked whether server authentication is required, then enable the tools. Start a new Hermes session afterward.
+
+### Other clients
+
+Choose **MCP / Streamable HTTP**, enter the loopback URL above, and select no transport authentication. Only connect trusted local clients. Do not replace `127.0.0.1` with `0.0.0.0`, a LAN address, or a public tunnel.
+
+## Everyday workflow
+
+Read/search and draft calls happen through the MCP client. Sending is deliberately split:
+
+1. The model calls `email_queue_send`.
+2. The durable queue records recipients, subject, body, and an idempotency key as `pending`.
+3. In a separate local terminal, run `email-hub-approve`.
+4. Read the complete immutable snapshot.
+5. Select one entry or all entries.
+6. Type the exact displayed `SEND N` confirmation.
+7. The background worker logs in to SMTP, changes the row to `sending` immediately before submission, and records `sent` only after confirmed success.
+
+If the process or network fails after submission may have begun, the row becomes `unknown`. Check Gmail Sent mail manually before deciding whether to create a new queue item.
 
 ## Data locations
 
-All paths are relative to the project directory:
-
 | Path | Contents |
 |---|---|
-| `state\email-hub.sqlite3` | Queue and minimal audit metadata. |
-| `state\backups\` | Rotating consistent database backups. |
-| `logs\email-hub.log` | Service lifecycle/backup diagnostics; message content is omitted. |
-| `logs\service.err.log` | MCP/HTTP runtime diagnostics. |
+| `~/.config/linux-email-hub/config.env` | Account identity and Gmail server settings. |
+| `~/.config/linux-email-hub/credentials.env` | Gmail app password; mode 0600. |
+| `~/.local/share/linux-email-hub/email-hub.sqlite3` | Queue and minimal audit metadata; mode 0600. |
+| `~/.local/share/linux-email-hub/backups/` | Seven newest consistent SQLite backups. |
+| `~/.local/share/linux-email-hub/email-hub.log` | Service lifecycle/errors without message content. |
+| `~/.config/systemd/user/linux-email-hub.service` | Per-user hardened service definition. |
 
-Queue rows necessarily contain the full unsent message so a person can review the exact snapshot. Protect the Windows account and project directory accordingly.
+No mailbox data, credentials, runtime database, logs, or local paths belong in this repository.
 
-## Privacy and security
+## Reliability behavior
 
-- Message bodies are returned only as plain text.
-- Every read result is wrapped in an untrusted-content warning.
-- HTML is not rendered by the MCP server.
-- Attachments are listed but never saved or opened.
-- Audit entries omit recipients, subjects, and bodies.
-- The portable exporter excludes all runtime state.
-- The public repository contains no mailbox addresses, messages, tokens, or workstation-specific paths.
+- SQLite WAL permits reads while queue changes commit.
+- `synchronous=FULL` favors durable queue state over throughput.
+- Backups run at startup and every six hours; the newest seven are retained.
+- Idempotency keys prevent repeated tool calls from creating duplicate queue entries.
+- Safe pre-submit connection/login failures retry with capped exponential backoff.
+- Failures during SMTP submission are ambiguous and become non-retrying `unknown`.
+- Any orphaned `sending` row becomes `unknown` on service startup.
+- Streamable HTTP is stateless; durable state stays in SQLite and Gmail.
 
-The approval program is a safety interlock, not a hard sandbox. A coding agent with unrestricted shell/filesystem access under the same Windows account could modify the SQLite database or invoke Outlook independently. Limit powerful tools, use client confirmation policies, and consider a separate restricted Windows account when facing hostile models or untrusted users.
+## Maintenance
 
-## Testing
-
-Tests do not send mail or create Outlook drafts:
-
-```powershell
-python -m py_compile email_hub.py admin.py verify_mcp.py test_resilience.py
-python test_resilience.py
-python verify_mcp.py
+```bash
+systemctl --user restart linux-email-hub.service
+journalctl --user -u linux-email-hub.service -f
+email-hub-status
 ```
 
-`test_resilience.py` verifies duplicate prevention, crash-to-unknown behavior, and consistent backup integrity using a temporary database. `verify_mcp.py` requires the running local service and performs MCP discovery plus `email_health`.
+Update without touching credentials or state:
 
-## Troubleshooting
-
-### Health reports no Outlook connection
-
-- Confirm classic Outlook opens normally under the same Windows user.
-- Finish any first-run or profile dialogs in Outlook.
-- Do not run Email Hub as `LocalSystem` or a different service account.
-
-### Port 18477 is already in use
-
-Set `EMAIL_HUB_PORT` before starting and update every client URL:
-
-```powershell
-$env:EMAIL_HUB_PORT = '19477'
-.\Start-EmailHub.ps1
+```bash
+git pull --ff-only
+./install.sh
 ```
 
-The default launchers and verification script assume `18477`; update them together for a permanent change.
+Uninstall the service and commands while preserving private configuration/state:
 
-### OpenWebUI returns 421
-
-Use `http://host.docker.internal:18477/mcp`, not the container's `127.0.0.1`. Current releases include this host in MCP DNS-rebinding protection while the socket remains bound to Windows loopback.
-
-### A queued message is `unknown`
-
-Do not blindly resend it. Search Outlook Sent Items using recipient, subject, and time. The state is intentionally non-retrying because delivery may already have succeeded.
-
-### A client cannot see newly added tools
-
-Start a new client session or use its MCP reload command. Tool definitions are commonly cached per session.
-
-## Project layout
-
-```text
-email_hub.py                    MCP server, Outlook adapter, queue worker
-admin.py                        Human approval program
-Setup-EmailHub.*                Runtime installation and shortcuts
-Start-EmailHub.ps1              Idempotent background launch
-Status-EmailHub.*               Health check and safe recovery
-Register-EmailHub-Clients.ps1   Client setup helper
-Email-Hub-AIO.*                 All-in-one menu
-Export-EmailHub.*               Privacy-preserving portable export
-test_resilience.py              Non-delivery durability tests
-verify_mcp.py                   Live MCP verification
-docs/                           Architecture and threat model
+```bash
+./uninstall.sh
 ```
 
-## Contributing
+To remove retained data too, review and delete `~/.config/linux-email-hub/` and `~/.local/share/linux-email-hub/` yourself. They are intentionally not deleted automatically.
 
-Issues and pull requests are welcome. Do not include real message content, account addresses, Outlook identifiers, credentials, database files, logs, or screenshots containing personal information. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+## Development and tests
 
-## License
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m py_compile linux_email_hub.py approve.py configure.py verify_mcp.py
+.venv/bin/pytest -q
+```
 
-MIT. See [LICENSE](LICENSE).
+Tests use `example.invalid` and temporary databases. They do not authenticate, create Gmail drafts, or send mail.
 
+## Important limitations
+
+- Loopback binding is not per-process authentication. Any process running as the same user may call the endpoint.
+- The approval prompt is a workflow interlock, not a sandbox against arbitrary shell/filesystem access as the same user.
+- Mail-enabled sessions should not also receive unrestricted code execution when handling untrusted messages.
+- HTML is not rendered, but a bounded MIME message segment is fetched to extract plain text and attachment metadata.
+- This project does not provide malware scanning, multi-user authorization, guaranteed delivery receipts, or protection for a compromised Linux account.
+
+## Attribution and license
+
+This Ubuntu port is maintained by Encapsulate and remains a fork of [Knappen/local-email-hub-mcp](https://github.com/Knappen/local-email-hub-mcp). The original concept and Windows implementation are credited to Knappen and the Local Email Hub contributors.
+
+MIT licensed. The original copyright notice is preserved in [LICENSE](LICENSE).

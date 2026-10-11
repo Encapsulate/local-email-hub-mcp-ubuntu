@@ -1,0 +1,27 @@
+[project]
+name = "local-email-hub-mcp-ubuntu"
+version = "0.1.0+ubuntu.1"
+description = "Loopback-only, human-approved IMAP/SMTP email MCP hub for Linux"
+requires-python = ">=3.11"
+dependencies = [
+  "imapclient>=3.0,<4",
+  "mcp>=1.26,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+linux-email-hub = "linux_email_hub:main"
+email-hub-configure = "configure:main"
+email-hub-approve = "approve:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["linux_email_hub", "approve", "configure", "verify_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

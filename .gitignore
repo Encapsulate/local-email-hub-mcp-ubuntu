@@ -1,16 +1,17 @@
 .venv/
 __pycache__/
+.pytest_cache/
+*.egg-info/
 *.py[cod]
+build/
+dist/
 state/
 logs/
-wheels/
-runtime/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+credentials.env
+config.env
+.env
 artifacts/
-*.zip
-*.bak
-*.before-email-hub.bak
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
 

@@ -1,30 +1,27 @@
 # Contributing
 
-Thank you for helping improve Local Email Hub MCP.
+This repository is the Ubuntu/Gmail port of Knappen's Local Email Hub MCP. Changes should preserve the original project's conservative mail-safety model.
 
 ## Development
 
-1. Use Windows with Python 3.12 for parity with release builds.
-2. Create a virtual environment: `python -m venv .venv`.
-3. Install: `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`.
-4. Run non-delivery tests: `.\.venv\Scripts\python.exe test_resilience.py`.
-5. Run syntax checks: `.\.venv\Scripts\python.exe -m py_compile email_hub.py admin.py verify_mcp.py test_resilience.py`.
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m py_compile linux_email_hub.py approve.py configure.py verify_mcp.py
+.venv/bin/pytest -q
+```
 
-Live Outlook and MCP checks are optional for pull requests. Never run send tests against a real recipient.
+Tests must not authenticate to a real mailbox, create provider drafts, or send mail.
 
 ## Privacy rules
 
-Do not commit:
+Never commit or post:
 
-- Email addresses, names, subjects, bodies, or Outlook entry/store IDs.
-- Screenshots of real mailboxes.
-- SQLite state, WAL/SHM files, backups, or logs.
-- OAuth tokens, passwords, API keys, authentication URLs, or environment dumps.
-- Machine-specific user/profile paths.
+- real email addresses, names, subjects, bodies, headers, folder names, or message identifiers;
+- screenshots of a real mailbox;
+- credentials, app passwords, OAuth tokens, cookies, API keys, or auth URLs;
+- SQLite state, WAL/SHM files, backups, logs, or configuration files;
+- workstation usernames, home paths, LAN addresses, or environment dumps.
 
-Use addresses under `example.invalid` in tests and documentation.
-
-## Pull requests
-
-Explain the behavior change, security implications, failure behavior, and tests. Changes near the send boundary must preserve the rule that an ambiguous send is never automatically retried.
+Use `example.invalid` and synthetic content. Pull requests should explain behavior, privacy/security impact, failure semantics, and tests. Any change near SMTP submission must preserve the rule that ambiguous sends are never automatically retried.
 

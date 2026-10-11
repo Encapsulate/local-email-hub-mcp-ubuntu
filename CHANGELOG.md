@@ -1,12 +1,10 @@
 # Changelog
 
-## 0.1.0 - 2026-10-10
+## 0.1.0-ubuntu.1 - 2026-10-10
 
-- Initial public release.
-- Outlook-backed MCP tools for account/folder discovery, search/read, and new/reply drafts.
-- Durable human-approved outbound queue with idempotency and conservative crash handling.
-- SQLite WAL/full-sync storage, integrity reporting, and rotating backups.
-- Qwen Code, Pi, Hermes Agent, DeepSeek Harness, and OpenWebUI setup guidance.
-- Turnkey setup/status/approval/AIO/export launchers.
-- Privacy-preserving portable export and non-delivery resilience tests.
+- Forked and credited Knappen's MIT-licensed Local Email Hub MCP.
+- Replaced classic Outlook COM with Gmail IMAP/SMTP over verified TLS.
+- Replaced PowerShell/Windows startup integration with portable Bash and a hardened systemd user service.
+- Preserved nine-tool behavior, prompt-injection warnings, human-only approval, idempotent queueing, crash-to-unknown semantics, SQLite durability, and rotating backups.
+- Added private local configuration, hidden app-password entry, live auth checks without sending, Codex/Hermes registration guidance, privacy/threat documentation, offline tests, and CI.
 

@@ -3,82 +3,64 @@
 ## Components
 
 ```text
-AI client / UI
-    │ Streamable HTTP MCP
+Trusted MCP client
+    │ Streamable HTTP on loopback
     ▼
-Local Email Hub (127.0.0.1:18477)
-    ├── Outlook COM adapter ──► classic Outlook profile ──► mail providers
-    ├── SQLite WAL queue
-    ├── background sender
-    └── rotating backups
+Local Email Hub MCP — Ubuntu Edition (127.0.0.1:18477)
+    ├── Gmail IMAP adapter ──► search, read, folders, drafts
+    ├── SQLite WAL queue  ──► pending/approved/sending state
+    ├── Gmail SMTP worker ──► submission only after approval
+    └── rotating SQLite backups
 
 Human reviewer
-    └── Approve-EmailHub.cmd ──► pending → approved
+    └── email-hub-approve ──► pending → approved
 ```
 
-The language model never connects directly to a provider. It asks its host to invoke an MCP tool. Email Hub uses the already authenticated Outlook profile belonging to the interactive Windows user.
+The model never receives a mailbox password and never connects directly to Gmail. Its host invokes bounded MCP tools. The service reads its app password from a private local file only when creating an authenticated IMAP or SMTP connection.
 
-## Transport
+## Transport and trust boundary
 
-`FastMCP` exposes stateless Streamable HTTP at `/mcp`. Stateless transport makes reconnects cheap; durable state lives in SQLite and Outlook rather than an MCP session.
+FastMCP provides stateless Streamable HTTP at `/mcp`. The listener is fixed to `127.0.0.1` by default and enables DNS-rebinding protection for loopback hosts/origins. The project does not include a LAN or public-listener recipe.
 
-The listener binds only to `127.0.0.1`. DNS-rebinding checks permit:
+Loopback is a host boundary, not process-level authentication. Other processes running as the same Linux user can reach the endpoint. Only trusted local clients should be used.
 
-- `127.0.0.1`
-- `localhost`
-- IPv6 loopback
-- `host.docker.internal` for Docker Desktop/OpenWebUI
+## IMAP behavior
 
-This is not a network authentication layer. Any process able to reach the local endpoint can invoke read and draft tools.
-
-## Outlook adapter
-
-Each operation initializes COM on its worker thread, opens `Outlook.Application`, uses the MAPI namespace, and then uninitializes COM. This avoids sharing thread-affine COM objects across async MCP requests.
-
-Email search scans a bounded number of recent messages. Message reads use Outlook's plain-text `Body`, not rendered HTML. Attachments are represented only by name, index, and size.
+- TLS certificate verification uses the operating system trust store.
+- Search is server-side and results are capped.
+- Reads are bounded and return plain text plus attachment metadata.
+- HTML is not rendered.
+- Drafts are appended with the IMAP `\\Draft` flag.
+- Message identity uses an IMAP folder plus UID; callers should not assume a UID is portable across folders.
 
 ## Queue schema
 
-The durable queue records:
+The private SQLite queue records:
 
-- UUID queue identifier
-- unique idempotency key
-- requested Outlook account
-- To/Cc/Bcc snapshot
-- subject/body snapshot
-- status timestamps
-- attempt count and diagnostic error
-- Outlook draft entry identifier when available
+- queue UUID and unique idempotency key;
+- To/Cc/Bcc snapshots;
+- subject/body snapshot;
+- state timestamps and attempt count;
+- diagnostic error and RFC message ID.
 
-Queue content is sensitive. It is excluded from exports and source control.
+Full queued content is required so the reviewer sees exactly what will be submitted. Audit rows omit recipients, subjects, bodies, and credentials.
 
 ## Send state machine
 
 ```text
-pending ──human approval──► approved ──worker lease──► sending
-   │                           │                         ├── confirmed call success ─► sent
-   └──────── cancel* ─────────► cancelled*              └── ambiguous interruption ─► unknown
+pending ──human approval──► approved ──SMTP login succeeds──► sending
+                                                               ├── confirmed success ─► sent
+                                                               └── ambiguous failure ─► unknown
 
-approved ──safe pre-send setup failure──► approved (backoff) ──after cap──► failed
+approved ──pre-submit connection/login failure──► approved + backoff
+                                             └── after retry cap ─► failed
 ```
 
-`cancelled` is reserved in the schema for administrative tooling. The current MCP API cannot approve, cancel, or send immediately.
+The worker authenticates before crossing the send boundary. It changes the row to `sending` immediately before `SMTP.send_message()`. Any exception from that call is ambiguous and becomes `unknown`, never an automatic retry. Startup converts orphaned `sending` rows to `unknown`.
 
-The critical design decision is the `sending → unknown` transition on startup. Once Outlook's `Send()` boundary may have been crossed, the program chooses possible manual follow-up over an automatic duplicate.
+## Storage and backups
 
-## Backups
+State defaults to `~/.local/share/linux-email-hub`. SQLite uses WAL mode, `synchronous=FULL`, and a 30-second busy timeout. The online backup API creates a consistent backup at startup and every six hours; the newest seven are retained.
 
-SQLite's online backup API creates a consistent copy at startup and every six hours. The newest seven are retained. Export archives exclude the primary database, WAL/SHM files, and backups.
-
-## Failure behavior
-
-- MCP client disconnect: no durable work is lost.
-- Email Hub restart: pending/approved work remains; orphaned sending work becomes unknown.
-- Outlook unavailable before send: retry with capped exponential backoff.
-- Outlook provider offline: Outlook controls synchronization; drafts remain in Outlook.
-- Machine restart: per-user Startup shortcut starts Email Hub after sign-in.
-
-## Why Outlook instead of provider-specific OAuth
-
-Outlook already implements authentication and synchronization for Exchange, Microsoft 365, Gmail, and IMAP accounts. Reusing it avoids duplicating refresh tokens, client registrations, and provider-specific APIs in every agent host. The trade-off is Windows/classic-Outlook dependence.
+Configuration defaults to `~/.config/linux-email-hub`. The installer creates both directories with mode `0700`; files containing credentials or queue content use mode `0600`.
 

@@ -1,16 +1,16 @@
 # Security policy
 
-## Reporting a vulnerability
+## Reporting
 
-Please use GitHub's private vulnerability reporting feature for this repository. Do not open a public issue containing mailbox data, credentials, message content, local paths, queue databases, logs, or proof-of-concept data taken from a real account.
+Use GitHub private vulnerability reporting for this repository. Do not open a public issue containing an address, app password, token, message, mailbox screenshot, local path, database, backup, log, or environment dump.
 
-Include the affected commit/version, Windows and classic Outlook versions, impact, reproducible steps using synthetic data, and any suggested mitigation.
+Include the affected commit/version, Ubuntu/Python versions, synthetic reproduction steps, impact, and any suggested mitigation.
 
-## Supported versions
+## Supported version
 
-Until the project reaches a stable major release, security fixes target the latest `main` branch and newest GitHub release.
+Until a stable major release, security fixes target the latest `main` branch and newest release.
 
-## Security posture
+## Deployment posture
 
-This project is a local workflow tool, not a hardened multi-user mail gateway. Read [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) before granting it access to sensitive accounts.
+This is a single-user local workflow tool, not a hardened multi-user mail gateway. Read [Privacy](docs/PRIVACY.md) and [Threat model](docs/THREAT-MODEL.md) before connecting sensitive accounts.
 
